@@ -1,0 +1,106 @@
+name: Auto markdownlint
+
+on:
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  markdownlint:
+    name: Apply markdownlint
+    runs-on: ubuntu-latest
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != 'sync/main-into-dev'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Ensure local branch
+        run: git checkout -B "${{ github.head_ref }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        run: corepack enable && corepack prepare pnpm@latest --activate
+
+      - name: Check for markdown issues
+        id: check_md
+        run: |
+          echo "has_issues=false" >> "$GITHUB_OUTPUT"
+          MODIFIED_FILES=$(git diff --name-only --diff-filter=ACMRT "${{ github.event.pull_request.base.sha }}" HEAD -- '*.md')
+          if [ -z "$MODIFIED_FILES" ]; then
+            echo "No Markdown files modified. Skipping linting."
+            exit 0
+          fi
+
+          EXISTING_FILES=""
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              EXISTING_FILES="${EXISTING_FILES}${file}"$'\n'
+            fi
+          done <<< "$MODIFIED_FILES"
+
+          MODIFIED_FILES="${EXISTING_FILES%$'\n'}"
+          if [ -z "$MODIFIED_FILES" ]; then
+            echo "No existing Markdown files to lint after filtering. Skipping."
+            exit 0
+          fi
+
+          {
+            echo "modified_files<<EOF"
+            echo "$MODIFIED_FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Checking markdown formatting for modified files..."
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done <<< "$MODIFIED_FILES"
+
+          if ! pnpm dlx markdownlint-cli2 "${files[@]}"; then
+            echo "has_issues=true" >> "$GITHUB_OUTPUT"
+            echo "Markdown issues detected. Applying automatic fixes in the next step."
+          fi
+
+      - name: Run markdownlint-cli2 --fix on modified files
+        if: steps.check_md.outputs.has_issues == 'true'
+        run: |
+          MODIFIED_FILES="${{ steps.check_md.outputs.modified_files }}"
+          files=()
+          while IFS= read -r file; do
+            files+=("$file")
+          done <<< "$MODIFIED_FILES"
+
+          if ! pnpm dlx markdownlint-cli2 --fix "${files[@]}"; then
+            echo "Some Markdown issues could not be auto-fixed. Continuing with any applied changes."
+          fi
+
+      - name: Check whether auto-fix changed files
+        id: check_changes
+        if: steps.check_md.outputs.has_issues == 'true'
+        run: |
+          if git diff --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No file changes produced by markdownlint --fix."
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Auto-commit markdownlint changes
+        if: steps.check_changes.outputs.has_changes == 'true'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: apply markdownlint fixes"
+          branch: ${{ github.head_ref }}

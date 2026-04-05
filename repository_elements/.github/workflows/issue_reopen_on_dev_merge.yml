@@ -1,0 +1,63 @@
+name: Issue Reopen Sync on Dev PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, closed]
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number targeting dev"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  sync-reopen-refs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build versioning_automation
+        run: cargo build -p versioning_automation
+
+      - name: Ensure jq is available
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y jq
+          else
+            jq --version
+          fi
+
+      - name: Sync reopen refs from PR targeting dev
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          target/debug/versioning_automation issue reopen-on-dev \
+            --pr "$PR_NUMBER" \
+            --repo "$GH_REPO"
+
+      - name: Manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          if [[ -z "$PR_NUMBER" || ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Invalid or missing pr_number." >&2
+            exit 1
+          fi
+          target/debug/versioning_automation issue reopen-on-dev \
+            --pr "$PR_NUMBER" \
+            --repo "$GH_REPO"

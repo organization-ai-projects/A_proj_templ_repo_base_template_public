@@ -1,0 +1,55 @@
+# Rust
+/target/
+**/target/
+**/*.rs.bk
+
+# Logs
+# Runtime logs (including watcher.log, etc.) should be written to:
+# - Root directory (ignored by *.log)
+# - /var/log/ (system-wide)
+# - A dedicated logs/ directory
+logs/
+*.log
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+*.out
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+*.vsix
+
+# Temporary files
+*.tmp
+*.bak
+*.old
+
+# Generated files
+*.lock
+Cargo.lock
+
+# Coverage
+coverage/
+*.profraw
+
+# Secrets
+.env
+.env.*
+
+ANALYSE_COHERENCE_WORKFLOWS_SCRIPTS.md
+
+# Ignore ui_dist files
+**/ui_dist/

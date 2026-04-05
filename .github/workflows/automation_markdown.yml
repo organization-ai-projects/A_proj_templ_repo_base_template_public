@@ -65,7 +65,7 @@ jobs:
           fi
 
       - name: Run markdownlint-cli2 --fix on modified files
-        if: steps.check_md.outputs.needs_fixing == 'true'
+        if: always() # Ensure this step runs even if the previous step fails
         run: |
           MODIFIED_FILES="${{ steps.check_md.outputs.modified_files }}"
           if [ -z "$MODIFIED_FILES" ]; then
@@ -76,7 +76,7 @@ jobs:
           printf '%s\n' "$MODIFIED_FILES" | xargs npx markdownlint-cli2 --fix
 
       - name: Auto-commit markdownlint changes
-        if: steps.check_md.outputs.needs_fixing == 'true'
+        if: always() # Ensure this step runs even if the previous step fails
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: apply markdownlint fixes"

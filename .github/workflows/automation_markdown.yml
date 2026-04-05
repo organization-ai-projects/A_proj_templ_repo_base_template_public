@@ -60,7 +60,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           echo "Checking markdown formatting for modified files..."
-          if ! printf '%s\n' "$MODIFIED_FILES" | xargs npx markdownlint-cli2; then
+          if ! printf '%s\n' "$MODIFIED_FILES" | xargs markdownlint-cli2; then
             echo "needs_fixing=true" >> $GITHUB_OUTPUT
           fi
 
@@ -73,7 +73,7 @@ jobs:
             exit 0
           fi
 
-          printf '%s\n' "$MODIFIED_FILES" | xargs npx markdownlint-cli2 --fix
+          printf '%s\n' "$MODIFIED_FILES" | xargs markdownlint-cli2 --fix
 
       - name: Auto-commit markdownlint changes
         if: always() # Ensure this step runs even if the previous step fails

@@ -83,7 +83,9 @@ jobs:
             files+=("$file")
           done <<< "$MODIFIED_FILES"
 
-          pnpm dlx markdownlint-cli2 --fix "${files[@]}"
+          if ! pnpm dlx markdownlint-cli2 --fix "${files[@]}"; then
+            echo "Some Markdown issues could not be auto-fixed. Continuing with any applied changes."
+          fi
 
       - name: Check whether auto-fix changed files
         id: check_changes

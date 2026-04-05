@@ -1,0 +1,252 @@
+name: Rust CI (Reusable)
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: short
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Rust CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 required for git diff origin/${base_ref}...HEAD
+          # on PRs where the base may be several commits behind.
+          fetch-depth: 0
+
+      - name: Detect if Rust checks are required
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_ref="${{ github.base_ref }}"
+            # Ensure the base reference is available locally
+            git fetch origin "$base_ref" --depth=1 2>/dev/null || true
+
+            if git rev-parse --verify -q "origin/${base_ref}" >/dev/null; then
+              if git merge-base "origin/${base_ref}" HEAD >/dev/null 2>&1; then
+                changed_files="$(git diff --name-only "origin/${base_ref}"...HEAD)"
+              else
+                echo "⚠️ No merge-base for origin/${base_ref}...HEAD, falling back to two-dot diff."
+                changed_files="$(git diff --name-only "origin/${base_ref}"..HEAD || true)"
+              fi
+            else
+              echo "⚠️ Base ref origin/${base_ref} not available locally."
+              changed_files=""
+            fi
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            before_sha="${{ github.event.before }}"
+            if [[ -n "$before_sha" && "$before_sha" != "0000000000000000000000000000000000000000" ]]; then
+              changed_files="$(git diff --name-only "$before_sha" "${{ github.sha }}")"
+            else
+              changed_files=""
+            fi
+          else
+            changed_files=""
+          fi
+
+          echo "Changed files:"
+          echo "$changed_files"
+
+          if [[ -z "$changed_files" ]]; then
+            # Conservative fallback: run full checks when diff is unclear.
+            echo "run_rust_checks=true" >> "$GITHUB_OUTPUT"
+            echo "run_layer_checks=true" >> "$GITHUB_OUTPUT"
+            echo "cargo_packages=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          docs_or_scripts_only=true
+          run_layer_checks=false
+          while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+
+            if [[ "$file" == projects/libraries/* ]] \
+              || [[ "$file" == projects/products/*/Cargo.toml ]] \
+              || [[ "$file" == Cargo.toml ]] \
+              || [[ "$file" == Cargo.lock ]] \
+              || [[ "$file" == scripts/checks/check_layer_boundaries.sh ]] \
+              || [[ "$file" == scripts/checks/layer_map.txt ]] \
+              || [[ "$file" == scripts/checks/layer_whitelist.txt ]] \
+              || [[ "$file" == .github/workflows/ci_reusable.yml ]]; then
+              run_layer_checks=true
+            fi
+
+            # Intentionally exclude workflow-only changes from Rust jobs.
+            # CI workflow edits should be validated in dedicated automation workflows/review.
+            if [[ "$file" =~ \.md$ ]] || [[ "$file" == documentation/* ]] || [[ "$file" == .github/documentation/* ]] || [[ "$file" == .github/ISSUE_TEMPLATE/* ]] || [[ "$file" == .github/PULL_REQUEST_TEMPLATE/* ]] || [[ "$file" == scripts/* ]] || [[ "$file" == .github/workflows/* ]]; then
+              continue
+            fi
+            docs_or_scripts_only=false
+            break
+          done <<< "$changed_files"
+
+          if [[ "$docs_or_scripts_only" == "true" ]]; then
+            echo "run_rust_checks=false" >> "$GITHUB_OUTPUT"
+            echo "cargo_packages=" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_rust_checks=true" >> "$GITHUB_OUTPUT"
+            declare -A pkg_set=()
+            while IFS= read -r file; do
+              [[ -z "$file" ]] && continue
+              [[ "$file" != *.rs && "$file" != *Cargo.toml ]] && continue
+
+              probe="$file"
+              if [[ ! -e "$probe" ]]; then
+                probe="$(dirname "$file")"
+              fi
+              while [[ "$probe" != "." && "$probe" != "/" ]]; do
+                if [[ -f "$probe/Cargo.toml" ]]; then
+                  # Fixture crates are not workspace members; skip them from targeted -p runs.
+                  if [[ "$probe" == *"/tests/fixtures/"* ]]; then
+                    break
+                  fi
+                  pkg_name="$(sed -nE 's/^name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$probe/Cargo.toml" | head -n1)"
+                  if [[ -n "$pkg_name" ]]; then
+                    pkg_set["$pkg_name"]=1
+                  fi
+                  break
+                fi
+                probe="$(dirname "$probe")"
+              done
+            done <<< "$changed_files"
+
+            if [[ ${#pkg_set[@]} -gt 0 ]]; then
+              mapfile -t pkg_names < <(printf '%s\n' "${!pkg_set[@]}" | sort)
+              echo "cargo_packages=${pkg_names[*]}" >> "$GITHUB_OUTPUT"
+            else
+              echo "cargo_packages=" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "run_layer_checks=${run_layer_checks}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        if: steps.changes.outputs.run_rust_checks == 'true' || steps.changes.outputs.run_layer_checks == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        if: steps.changes.outputs.run_rust_checks == 'true' || steps.changes.outputs.run_layer_checks == 'true'
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check strict layer dependency boundaries
+        if: steps.changes.outputs.run_layer_checks == 'true'
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f ./scripts/checks/check_layer_boundaries.sh ]]; then
+            echo "❌ check_layer_boundaries.sh not found" >&2
+            exit 1
+          fi
+
+          mkdir -p /tmp/layer-check
+          strict_log="/tmp/layer-check/strict-layer.log"
+          anomaly_log="/tmp/layer-check/analyze-layer-anomalies.log"
+          anomaly_json="/tmp/layer-check/layer-anomalies.json"
+
+          set +e
+          bash ./scripts/checks/check_layer_boundaries.sh --strict 2>&1 | tee "$strict_log"
+          strict_status=${PIPESTATUS[0]}
+          set -e
+
+          if [[ $strict_status -ne 0 ]]; then
+            echo "::group::Strict layer diagnostics (tail)"
+            tail -n 200 "$strict_log" || true
+            echo "::endgroup::"
+
+            if [[ -f ./scripts/checks/analyze_layer_anomalies.sh ]]; then
+              echo "::group::Layer anomaly analysis snapshot"
+              bash ./scripts/checks/analyze_layer_anomalies.sh --json-out "$anomaly_json" 2>&1 | tee "$anomaly_log" || true
+              echo "::endgroup::"
+            fi
+
+            exit "$strict_status"
+          fi
+
+      - name: Upload strict-layer diagnostics artifact
+        if: always() && steps.changes.outputs.run_layer_checks == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: strict-layer-diagnostics
+          path: /tmp/layer-check/
+          if-no-files-found: ignore
+
+      - name: Cargo fmt
+        if: steps.changes.outputs.run_rust_checks == 'true'
+        run: |
+          source ./scripts/common_lib/automation/rust_checks.sh
+          rust_checks_run_fmt_check
+
+      - name: Cargo clippy
+        if: steps.changes.outputs.run_rust_checks == 'true'
+        run: |
+          source ./scripts/common_lib/automation/rust_checks.sh
+          LOCKED_ARGS=()
+          if rust_checks_has_lockfile; then
+            LOCKED_ARGS=(--locked)
+          else
+            echo "Cargo.lock missing in checkout, running clippy without --locked."
+          fi
+
+          PKG_ARGS=()
+          if [[ -n "${{ steps.changes.outputs.cargo_packages }}" ]]; then
+            read -r -a PKGS <<< "${{ steps.changes.outputs.cargo_packages }}"
+            for pkg in "${PKGS[@]}"; do
+              [[ -n "$pkg" ]] && PKG_ARGS+=(-p "$pkg")
+            done
+          fi
+
+          if [[ ${#PKG_ARGS[@]} -gt 0 ]]; then
+            echo "Running clippy for changed packages: ${PKGS[*]}"
+            rust_checks_run_clippy "${LOCKED_ARGS[@]}" "${PKG_ARGS[@]}" --all-features --all-targets
+          else
+            echo "No package mapping from changed files; falling back to workspace clippy."
+            rust_checks_run_clippy "${LOCKED_ARGS[@]}" --workspace --all-features --all-targets
+          fi
+
+      - name: Cargo test
+        if: steps.changes.outputs.run_rust_checks == 'true'
+        run: |
+          source ./scripts/common_lib/automation/rust_checks.sh
+          LOCKED_ARGS=()
+          if rust_checks_has_lockfile; then
+            LOCKED_ARGS=(--locked)
+          else
+            echo "Cargo.lock missing in checkout, running tests without --locked."
+          fi
+
+          PKG_ARGS=()
+          if [[ -n "${{ steps.changes.outputs.cargo_packages }}" ]]; then
+            read -r -a PKGS <<< "${{ steps.changes.outputs.cargo_packages }}"
+            for pkg in "${PKGS[@]}"; do
+              [[ -n "$pkg" ]] && PKG_ARGS+=(-p "$pkg")
+            done
+          fi
+
+          if [[ ${#PKG_ARGS[@]} -gt 0 ]]; then
+            echo "Running tests for changed packages: ${PKGS[*]}"
+            rust_checks_run_tests "${LOCKED_ARGS[@]}" "${PKG_ARGS[@]}" --all-features --all-targets --verbose
+          else
+            echo "No package mapping from changed files; falling back to workspace tests."
+            rust_checks_run_tests "${LOCKED_ARGS[@]}" --workspace --all-features --all-targets --verbose
+          fi
+
+      - name: Rust checks skipped (docs/scripts/workflows-only)
+        if: steps.changes.outputs.run_rust_checks != 'true'
+        run: echo "Docs/scripts/workflows-only change detected. Rust checks intentionally skipped."
+
+      - name: Strict layer checks skipped
+        if: steps.changes.outputs.run_layer_checks != 'true'
+        run: echo "No layer-impacting change detected. Strict layer checks intentionally skipped."

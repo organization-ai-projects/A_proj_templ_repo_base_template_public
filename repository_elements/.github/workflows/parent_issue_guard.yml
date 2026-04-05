@@ -1,0 +1,83 @@
+name: Parent Issue Guard
+
+on:
+  issues:
+    types: [opened, edited, reopened, closed]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to evaluate as parent"
+        required: true
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  parent-issue-status:
+    if: github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build versioning_automation
+        run: cargo build -p versioning_automation
+
+      - name: Ensure jq is available
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y jq
+          else
+            jq --version
+          fi
+
+      - name: Evaluate issue as parent candidate
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          # Evaluate the changed issue itself as a potential parent.
+          target/debug/versioning_automation issue parent-guard \
+            --issue "$ISSUE_NUMBER" \
+            --strict-guard true \
+            --repo "$GH_REPO"
+
+      - name: Evaluate parent candidates from changed child
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          # Re-evaluate any parent impacted by the changed child issue state.
+          # This intentionally runs for opened/edited/reopened/closed events.
+          target/debug/versioning_automation issue parent-guard \
+            --child "$ISSUE_NUMBER" \
+            --strict-guard true \
+            --repo "$GH_REPO"
+
+      - name: Manual parent evaluation
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          if [[ -z "$ISSUE_NUMBER" ]]; then
+            echo "Missing issue_number for workflow_dispatch." >&2
+            exit 1
+          fi
+          if [[ ! "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "Invalid issue_number '$ISSUE_NUMBER' (expected positive integer)." >&2
+            exit 1
+          fi
+          target/debug/versioning_automation issue parent-guard \
+            --issue "$ISSUE_NUMBER" \
+            --strict-guard true \
+            --repo "$GH_REPO"

@@ -1,0 +1,89 @@
+# Workflows Documentation
+
+This directory contains all documentation related to GitHub Actions workflows used in this repository. The goal is to provide clarity on their purpose, triggers, and steps.
+
+## Role in the Project
+
+This directory is responsible for maintaining comprehensive documentation for all GitHub Actions workflows used in the repository. It ensures that workflow configurations are well-documented, maintainable, and understandable for all contributors.
+
+It interacts mainly with:
+
+- `.github/workflows/`: The actual workflow configuration files
+- `.github/`: Parent directory for GitHub-related configuration
+- Root repository documentation for overall project context
+
+## Directory Structure
+
+```plaintext
+.github/workflows/
+├── ci_main.yml           # Handles CI tasks for the main branch
+├── ci_dev.yml            # Handles CI tasks for the dev branch
+├── ci_reusable.yml       # Reusable workflow for common CI steps
+├── scripts_integrity.yml # Script integrity + shell regression gate
+├── automation_rustfmt.yml # Automates code formatting checks
+├── automation_sync.yml   # Syncs main into dev after merge
+├── issue_done_in_dev_status.yml # Maintains done-in-dev issue status label lifecycle
+├── issue_reopen_on_dev_merge.yml # Reopens issues from Reopen refs on merged PRs into dev
+├── pr_auto_closes_enrichment.yml # Auto-manages Closes refs on open PRs targeting dev
+└── documentation/
+    ├── TOC.md           # Table of contents for workflow documentation
+    ├── ci_main.md       # Documentation for the ci_main.yml workflow
+    ├── ci_dev.md        # Documentation for the ci_dev.yml workflow
+    ├── ci_reusable.md   # Documentation for the ci_reusable.yml workflow
+    ├── scripts_integrity.md # Documentation for scripts_integrity.yml
+    ├── automation_rustfmt.md # Documentation for the automation_rustfmt.yml workflow
+    ├── automation_sync.md # Documentation for the automation_sync.yml workflow
+    ├── issue_done_in_dev_status.md # Documentation for issue_done_in_dev_status.yml
+    ├── issue_reopen_on_dev_merge.md # Documentation for issue_reopen_on_dev_merge.yml
+    ├── pr_auto_closes_enrichment.md # Documentation for pr_auto_closes_enrichment.yml
+    ├── bot/
+    │   ├── README.md    # Bot workflows docs index
+    │   └── TOC.md       # Bot workflows documentation TOC
+    └── README.md        # This file
+```
+
+## Files
+
+- `README.md`: Documentation index for workflows.
+- `TOC.md`: Table of contents for workflow documentation.
+- `ci_main.md`: Documentation for the `ci_main.yml` workflow.
+- `ci_dev.md`: Documentation for the `ci_dev.yml` workflow.
+- `ci_reusable.md`: Documentation for the `ci_reusable.yml` workflow.
+- `scripts_integrity.md`: Documentation for the `scripts_integrity.yml` workflow.
+- `automation_rustfmt.md`: Documentation for the `automation_rustfmt.yml` workflow.
+- `automation_sync.md`: Documentation for the `automation_sync.yml` workflow.
+- `issue_done_in_dev_status.md`: Documentation for the `issue_done_in_dev_status.yml` workflow.
+- `issue_reopen_on_dev_merge.md`: Documentation for the `issue_reopen_on_dev_merge.yml` workflow.
+- `pr_auto_closes_enrichment.md`: Documentation for the `pr_auto_closes_enrichment.yml` workflow.
+- `bot/README.md`: Bot workflow docs index.
+- `bot/TOC.md`: Bot workflows documentation TOC.
+
+## Organization Principle
+
+Workflows are organized into two categories:
+
+- **CI Workflows**:
+  - `ci_main.yml`: Handles CI tasks for the `main` branch.
+  - `ci_dev.yml`: Handles CI tasks for the `dev` branch.
+  - `ci_reusable.yml`: A reusable workflow for common CI steps.
+  - `scripts_integrity.yml`: Validates script integrity and critical shell regressions.
+
+- **Automation Workflows**:
+  - `automation_rustfmt.yml`: Automates code formatting checks.
+  - `automation_sync.yml`: Syncs main into dev after merge.
+  - `issue_done_in_dev_status.yml`: Maintains done-in-dev issue status label lifecycle.
+  - `issue_reopen_on_dev_merge.yml`: Reopens issues referenced by `Reopen #...` on merged PRs into `dev`.
+  - `pr_auto_closes_enrichment.yml`: Auto-enriches open PR bodies targeting `dev` with managed `Closes #...` lines.
+
+## Adding New Workflows
+
+1. **Understand the workflow's purpose** - What task does it automate?
+2. **Document it** - Create a new `.md` file in this directory.
+3. **Update the TOC** - Add the new workflow to the `TOC.md` in `.github/`.
+
+## Documentation
+
+For a complete overview of workflows:
+
+- See the [GitHub TOC](../../TOC.md)
+- Refer to individual workflow documentation files in this directory.

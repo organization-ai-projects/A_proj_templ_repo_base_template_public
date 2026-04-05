@@ -1,0 +1,36 @@
+name: Rust CI (main)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Gate PR sources into main
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Allow only dev or hotfix/* into main
+        run: |
+          HEAD="${{ github.head_ref }}"
+          if [[ "$HEAD" == "dev" || "$HEAD" == hotfix/* ]]; then
+            echo "✅ OK: Branch '$HEAD' is allowed to merge into main."
+            exit 0
+          fi
+          echo "❌ ERROR: Only 'dev' or 'hotfix/*' branches can merge into main. Received: '$HEAD'."
+          exit 1
+
+  ci:
+    name: Rust CI
+    needs: [gate]
+    if: always() && (needs.gate.result == 'success' || needs.gate.result == 'skipped')
+    uses: ./.github/workflows/ci_reusable.yml

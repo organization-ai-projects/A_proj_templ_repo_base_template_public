@@ -1,0 +1,19 @@
+name: Rust CI (dev)
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Run reusable Rust CI
+    uses: ./.github/workflows/ci_reusable.yml

@@ -1,0 +1,79 @@
+name: Automation - Sync main to dev
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: sync-main-to-dev
+  cancel-in-progress: false
+
+jobs:
+  sync-main-to-dev:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      SYNC_BRANCH: sync/main-into-dev
+      SOURCE_BRANCH: main
+      TARGET_BRANCH: dev
+
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: tibdex/github-app-token@v2
+        with:
+          app_id: ${{ secrets.BOT_APP_ID }}
+          private_key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+
+      - name: Export tokens
+        run: |
+          echo "APP_GH_TOKEN=${{ steps.app-token.outputs.token }}" >> $GITHUB_ENV
+          echo "GH_TOKEN=${{ steps.app-token.outputs.token }}" >> $GITHUB_ENV
+
+      - name: Create or update sync branch
+        run: |
+          SOURCE_SHA="$(gh api "repos/${{ github.repository }}/git/ref/heads/${SOURCE_BRANCH}" --jq '.object.sha')"
+
+          if gh api "repos/${{ github.repository }}/git/ref/heads/${SYNC_BRANCH}" >/dev/null 2>&1; then
+            gh api \
+              --method PATCH \
+              "repos/${{ github.repository }}/git/refs/heads/${SYNC_BRANCH}" \
+              -f sha="${SOURCE_SHA}" \
+              -F force=true
+          else
+            gh api \
+              --method POST \
+              "repos/${{ github.repository }}/git/refs" \
+              -f ref="refs/heads/${SYNC_BRANCH}" \
+              -f sha="${SOURCE_SHA}"
+          fi
+
+      - name: Create sync pull request if missing
+        run: |
+          PR_URL="$(gh pr list \
+            --repo "${{ github.repository }}" \
+            --state open \
+            --head "${SYNC_BRANCH}" \
+            --base "${TARGET_BRANCH}" \
+            --json url \
+            --jq '.[0].url')"
+
+          if [ -n "${PR_URL}" ] && [ "${PR_URL}" != "null" ]; then
+            echo "Sync pull request already exists: ${PR_URL}"
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "${{ github.repository }}" \
+            --base "${TARGET_BRANCH}" \
+            --head "${SYNC_BRANCH}" \
+            --title "Sync ${SOURCE_BRANCH} into ${TARGET_BRANCH}" \
+            --body "Automated sync pull request from \`${SOURCE_BRANCH}\` into \`${TARGET_BRANCH}\`."

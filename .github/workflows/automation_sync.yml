@@ -58,22 +58,50 @@ jobs:
 
       - name: Create sync pull request if missing
         run: |
-          PR_URL="$(gh pr list \
+          PR_NUMBER="$(gh pr list \
             --repo "${{ github.repository }}" \
             --state open \
             --head "${SYNC_BRANCH}" \
             --base "${TARGET_BRANCH}" \
-            --json url \
-            --jq '.[0].url')"
+            --json number \
+            --jq '.[0].number')"
 
-          if [ -n "${PR_URL}" ] && [ "${PR_URL}" != "null" ]; then
-            echo "Sync pull request already exists: ${PR_URL}"
+          if [ -n "${PR_NUMBER}" ] && [ "${PR_NUMBER}" != "null" ]; then
+            echo "Sync pull request already exists: #${PR_NUMBER}"
+            echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_ENV"
             exit 0
           fi
 
-          gh pr create \
+          PR_URL="$(gh pr create \
             --repo "${{ github.repository }}" \
             --base "${TARGET_BRANCH}" \
             --head "${SYNC_BRANCH}" \
             --title "Sync ${SOURCE_BRANCH} into ${TARGET_BRANCH}" \
-            --body "Automated sync pull request from \`${SOURCE_BRANCH}\` into \`${TARGET_BRANCH}\`."
+            --body "Automated sync pull request from \`${SOURCE_BRANCH}\` into \`${TARGET_BRANCH}\`.")"
+
+          PR_NUMBER="$(gh pr view \
+            --repo "${{ github.repository }}" \
+            "${SYNC_BRANCH}" \
+            --json number \
+            --jq '.number')"
+
+          echo "Created sync pull request: ${PR_URL}"
+          echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Apply labels and enable auto-merge
+        run: |
+          if [ -z "${PR_NUMBER}" ] || [ "${PR_NUMBER}" = "null" ]; then
+            echo "PR_NUMBER is missing."
+            exit 1
+          fi
+
+          gh pr edit \
+            --repo "${{ github.repository }}" \
+            "${PR_NUMBER}" \
+            --add-label automation \
+            --add-label pull-request
+
+          gh pr merge \
+            --repo "${{ github.repository }}" \
+            "${PR_NUMBER}" \
+            --auto --merge --delete-branch
